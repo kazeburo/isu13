@@ -13,13 +13,12 @@ import (
 	"strconv"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/goccy/go-json"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/gorilla/sessions"
 	"github.com/labstack/echo-contrib/session"
-	echolog "github.com/labstack/gommon/log"
 )
 
 const (
@@ -92,7 +91,7 @@ func connectDB(logger echo.Logger) (*sqlx.DB, error) {
 		}
 		conf.ParseTime = parseTime
 	}
-
+	conf.InterpolateParams = true
 	db, err := sqlx.Open("mysql", conf.FormatDSN())
 	if err != nil {
 		return nil, err
@@ -118,11 +117,29 @@ func initializeHandler(c echo.Context) error {
 	})
 }
 
+type JSONSerializer struct{}
+
+func (j *JSONSerializer) Serialize(c echo.Context, i interface{}, indent string) error {
+	enc := json.NewEncoder(c.Response())
+	return enc.Encode(i)
+}
+
+func (j *JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
+	err := json.NewDecoder(c.Request().Body).Decode(i)
+	if ute, ok := err.(*json.UnmarshalTypeError); ok {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Unmarshal type error: expected=%v, got=%v, field=%v, offset=%v", ute.Type, ute.Value, ute.Field, ute.Offset)).SetInternal(err)
+	} else if se, ok := err.(*json.SyntaxError); ok {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Syntax error: offset=%v, error=%v", se.Offset, se.Error())).SetInternal(err)
+	}
+	return err
+}
+
 func main() {
 	e := echo.New()
-	e.Debug = true
-	e.Logger.SetLevel(echolog.DEBUG)
-	e.Use(middleware.Logger())
+	// e.Debug = false
+	// e.Logger.SetLevel(echolog.DEBUG)
+	// e.Use(middleware.Logger())
+	e.JSONSerializer = &JSONSerializer{}
 	cookieStore := sessions.NewCookieStore(secret)
 	cookieStore.Options.Domain = "*.u.isucon.dev"
 	e.Use(session.Middleware(cookieStore))
@@ -190,6 +207,8 @@ func main() {
 		e.Logger.Errorf("failed to connect db: %v", err)
 		os.Exit(1)
 	}
+	conn.SetMaxOpenConns(8)
+	conn.SetMaxIdleConns(8)
 	defer conn.Close()
 	dbConn = conn
 

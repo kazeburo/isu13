@@ -66,9 +66,26 @@ func getReactionsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "failed to get reactions")
 	}
 
+	livestreamModel := LivestreamModel{}
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags  FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+		return err
+	}
+	userIDs := []int64{livestreamModel.UserID}
+	for i := range reactionModels {
+		userIDs = append(userIDs, reactionModels[i].UserID)
+	}
+	userMap, err := getUserMap(ctx, tx, userIDs)
+	if err != nil {
+		return err
+	}
+	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel, userMap)
+	if err != nil {
+		return err
+	}
+
 	reactions := make([]Reaction, len(reactionModels))
 	for i := range reactionModels {
-		reaction, err := fillReactionResponse(ctx, tx, reactionModels[i])
+		reaction, err := fillReactionResponse(ctx, tx, reactionModels[i], livestream, userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 		}
@@ -129,7 +146,20 @@ func postReactionHandler(c echo.Context) error {
 	}
 	reactionModel.ID = reactionID
 
-	reaction, err := fillReactionResponse(ctx, tx, reactionModel)
+	livestreamModel := LivestreamModel{}
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags  FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+		return err
+	}
+	userIDs := []int64{reactionModel.UserID, livestreamModel.UserID}
+	userMap, err := getUserMap(ctx, tx, userIDs)
+	if err != nil {
+		return err
+	}
+	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel, userMap)
+	if err != nil {
+		return err
+	}
+	reaction, err := fillReactionResponse(ctx, tx, reactionModel, livestream, userMap)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
@@ -141,23 +171,20 @@ func postReactionHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, reaction)
 }
 
-func fillReactionResponse(ctx context.Context, tx *sqlx.Tx, reactionModel ReactionModel) (Reaction, error) {
-	userModel := UserModel{}
-	if err := tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", reactionModel.UserID); err != nil {
-		return Reaction{}, err
-	}
-	user, err := fillUserResponse(ctx, tx, userModel)
-	if err != nil {
-		return Reaction{}, err
-	}
-
-	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", reactionModel.LivestreamID); err != nil {
-		return Reaction{}, err
-	}
-	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
-	if err != nil {
-		return Reaction{}, err
+func fillReactionResponse(ctx context.Context, tx *sqlx.Tx, reactionModel ReactionModel, livestream Livestream, usermap map[int64]UserModel) (Reaction, error) {
+	var user User
+	if um, ok := usermap[reactionModel.UserID]; ok {
+		user = um.toUser()
+	} else {
+		userModel := UserModel{}
+		if err := tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", reactionModel.UserID); err != nil {
+			return Reaction{}, err
+		}
+		var err error
+		user, err = fillUserResponse(ctx, tx, userModel)
+		if err != nil {
+			return Reaction{}, err
+		}
 	}
 
 	reaction := Reaction{

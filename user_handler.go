@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,11 +29,13 @@ const (
 var fallbackImage = "../img/NoImage.jpg"
 
 type UserModel struct {
-	ID             int64  `db:"id"`
-	Name           string `db:"name"`
-	DisplayName    string `db:"display_name"`
-	Description    string `db:"description"`
-	HashedPassword string `db:"password"`
+	ID             int64      `db:"id"`
+	Name           string     `db:"name"`
+	DisplayName    string     `db:"display_name"`
+	Description    string     `db:"description"`
+	HashedPassword string     `db:"password"`
+	Theme          ThemeModel `db:"theme"`
+	IconHash       string     `db:"icon_hash"`
 }
 
 type User struct {
@@ -85,27 +85,57 @@ type PostIconResponse struct {
 	ID int64 `json:"id"`
 }
 
+func (m UserModel) toUser() User {
+	user := User{
+		ID:          m.ID,
+		Name:        m.Name,
+		DisplayName: m.DisplayName,
+		Description: m.Description,
+		Theme: Theme{
+			ID:       m.Theme.ID,
+			DarkMode: m.Theme.DarkMode,
+		},
+		IconHash: m.IconHash,
+	}
+	return user
+}
+
 func getIconHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	username := c.Param("username")
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
+	/*
+		tx, err := dbConn.BeginTxx(ctx, nil)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		}
+		defer tx.Rollback()
+	*/
+
+	query := `SELECT
+	u.id AS id,
+	u.name AS name, 
+	IFNULL(i.icon_hash,"d9f8294e9d895f81ce62e73dc7d5dff862a4fa40bd4e0fecf53f7526a8edcac0") AS icon_hash
+	FROM users u LEFT JOIN icons i ON u.id = i.user_id WHERE u.name = ?
+	`
 
 	var user UserModel
-	if err := tx.GetContext(ctx, &user, "SELECT * FROM users WHERE name = ?", username); err != nil {
+	if err := dbConn.GetContext(ctx, &user, query, username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		} else {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+	}
+
+	match, ok := c.Request().Header["If-None-Match"]
+	if ok && strings.Contains(match[0], user.IconHash) {
+		return c.NoContent(http.StatusNotModified)
 	}
 
 	var image []byte
-	if err := tx.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
+	if err := dbConn.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.File(fallbackImage)
 		} else {
@@ -134,17 +164,19 @@ func postIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
+	/*
+		tx, err := dbConn.BeginTxx(ctx, nil)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		}
+		defer tx.Rollback()
+	*/
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
+	if _, err := dbConn.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
 	}
 
-	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image) VALUES (?, ?)", userID, req.Image)
+	rs, err := dbConn.ExecContext(ctx, "INSERT INTO icons (user_id, image) VALUES (?, ?)", userID, req.Image)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
 	}
@@ -154,9 +186,11 @@ func postIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted icon id: "+err.Error())
 	}
 
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		}
+	*/
 
 	return c.JSON(http.StatusCreated, &PostIconResponse{
 		ID: iconID,
@@ -256,9 +290,11 @@ func registerHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert user theme: "+err.Error())
 	}
 
-	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "0", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
-	}
+	/*
+		if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "0", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
+		}
+	*/
 
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
@@ -283,15 +319,17 @@ func loginHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
+	/*
+		tx, err := dbConn.BeginTxx(ctx, nil)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		}
+		defer tx.Rollback()
+	*/
 
 	userModel := UserModel{}
 	// usernameはUNIQUEなので、whereで一意に特定できる
-	err = tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", req.Username)
+	err := dbConn.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", req.Username)
 	if errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
 	}
@@ -299,9 +337,11 @@ func loginHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-	}
+	/*
+		if err := tx.Commit(); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		}
+	*/
 
 	err = bcrypt.CompareHashAndPassword([]byte(userModel.HashedPassword), []byte(req.Password))
 	if err == bcrypt.ErrMismatchedHashAndPassword {
@@ -404,17 +444,13 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 		return User{}, err
 	}
 
-	var image []byte
-	if err := tx.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", userModel.ID); err != nil {
+	var iconHash string
+	if err := tx.GetContext(ctx, &iconHash, "SELECT icon_hash FROM icons WHERE user_id = ?", userModel.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return User{}, err
 		}
-		image, err = os.ReadFile(fallbackImage)
-		if err != nil {
-			return User{}, err
-		}
+		iconHash = "d9f8294e9d895f81ce62e73dc7d5dff862a4fa40bd4e0fecf53f7526a8edcac0"
 	}
-	iconHash := sha256.Sum256(image)
 
 	user := User{
 		ID:          userModel.ID,
@@ -425,8 +461,39 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 			ID:       themeModel.ID,
 			DarkMode: themeModel.DarkMode,
 		},
-		IconHash: fmt.Sprintf("%x", iconHash),
+		IconHash: iconHash,
 	}
 
 	return user, nil
+}
+
+func getUserMap(ctx context.Context, tx *sqlx.Tx, userIDs []int64) (map[int64]UserModel, error) {
+	userMap := map[int64]UserModel{}
+	if len(userIDs) == 0 {
+		return userMap, nil
+	}
+	slices.Sort(userIDs)
+	userIDs = slices.Compact(userIDs)
+	query := `SELECT STRAIGHT_JOIN u.id AS id,
+	u.name AS name, 
+	u.display_name AS display_name, 
+	u.password AS password, 
+	u.description AS description, 
+	t.id AS "theme.id",
+	t.user_id AS "theme.user_id",
+	t.dark_mode AS "theme.dark_mode",
+	IFNULL(i.icon_hash,"d9f8294e9d895f81ce62e73dc7d5dff862a4fa40bd4e0fecf53f7526a8edcac0") AS icon_hash
+	FROM users u JOIN themes t ON u.id = t.user_id 
+	LEFT JOIN icons i ON u.id = i.user_id WHERE u.id IN (?)
+	`
+	query, params, _ := sqlx.In(query, userIDs)
+	users := []UserModel{}
+	if err := tx.SelectContext(ctx, &users, query, params...); err != nil {
+		return nil, err
+	}
+
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+	return userMap, nil
 }
