@@ -23,7 +23,7 @@ mysql> ALTER TABLE livestreams ADD raw_tags VARCHAR(255) NOT NULL DEFAULT "" AFT
 mysql> UPDATE livestreams u SET raw_tags=IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ",") FROM livestream_tags WHERE livestream_id=u.id GROUP BY livestream_id),"");
 ```
 
-move icon_hash to users
+create icon_hash on users
 
 ```
 ALTER TABLE users ADD icon_hash VARCHAR(255) NOT NULL DEFAULT "" AFTER description;
