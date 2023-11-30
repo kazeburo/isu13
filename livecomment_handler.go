@@ -85,7 +85,7 @@ func getLivecommentsHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	query := "SELECT * FROM livecomments WHERE livestream_id = ? ORDER BY created_at DESC"
+	query := "SELECT * FROM livecomments WHERE livestream_id = ? ORDER BY id DESC"
 	if c.QueryParam("limit") != "" {
 		limit, err := strconv.Atoi(c.QueryParam("limit"))
 		if err != nil {
@@ -103,7 +103,7 @@ func getLivecommentsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
 		return err
 	}
 	userIDs := []int64{livestreamModel.UserID}
@@ -160,7 +160,7 @@ func getNgwords(c echo.Context) error {
 	defer tx.Rollback()
 
 	var ngWords []*NGWord
-	if err := tx.SelectContext(ctx, &ngWords, "SELECT * FROM ng_words WHERE user_id = ? AND livestream_id = ? ORDER BY created_at DESC", userID, livestreamID); err != nil {
+	if err := tx.SelectContext(ctx, &ngWords, "SELECT * FROM ng_words WHERE user_id = ? AND livestream_id = ? ORDER BY id DESC", userID, livestreamID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.JSON(http.StatusOK, []*NGWord{})
 		} else {
@@ -205,7 +205,7 @@ func postLivecommentHandler(c echo.Context) error {
 	defer tx.Rollback()
 
 	var livestreamModel LivestreamModel
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "livestream not found")
 		} else {
@@ -221,19 +221,6 @@ func postLivecommentHandler(c echo.Context) error {
 
 	var hitSpam int
 	for _, ngword := range ngwords {
-		/*
-			query := `
-			SELECT COUNT(*)
-			FROM
-			(SELECT ? AS text) AS texts
-			INNER JOIN
-			(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
-			ON texts.text LIKE patterns.pattern;
-			`
-			if err := tx.GetContext(ctx, &hitSpam, query, req.Comment, ngword.Word); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get hitspam: "+err.Error())
-			}
-		*/
 		if strings.Contains(req.Comment, ngword.Word) {
 			hitSpam++
 		}
@@ -389,7 +376,7 @@ func moderateHandler(c echo.Context) error {
 
 	// 配信者自身の配信に対するmoderateなのかを検証
 	var ownedLivestreams []LivestreamModel
-	if err := tx.SelectContext(ctx, &ownedLivestreams, "SELECT * FROM livestreams WHERE id = ? AND user_id = ?", livestreamID, userID); err != nil {
+	if err := tx.SelectContext(ctx, &ownedLivestreams, "SELECT id FROM livestreams WHERE id = ? AND user_id = ?", livestreamID, userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 	if len(ownedLivestreams) == 0 {
@@ -416,44 +403,14 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
 	}
 
-	var livecomments []*LivecommentModel
-	if err := tx.SelectContext(ctx, &livecomments, "SELECT * FROM livecomments"); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
-	}
-
-	// NGワードにヒットする過去の投稿も全削除する
-	for _, ngword := range ngwords {
-		// ライブコメント一覧取得
-		for _, livecomment := range livecomments {
-			/*
-				query := `
-				DELETE FROM livecomments
-				WHERE
-				id = ? AND
-				livestream_id = ? AND
-				(SELECT COUNT(*)
-				FROM
-				(SELECT ? AS text) AS texts
-				INNER JOIN
-				(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
-				ON texts.text LIKE patterns.pattern) >= 1;
-				`
-				if _, err := tx.ExecContext(ctx, query, livecomment.ID, livestreamID, livecomment.Comment, ngword.Word); err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
-				}
-			*/
-			if strings.Contains(livecomment.Comment, ngword.Word) {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM livecomments WHERE id = ?`, livecomment.ID); err != nil {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
-				}
-			}
-		}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM livecomments WHERE INSTR(comment, ?) > 0`, ngwords[0].Word); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	return c.JSON(http.StatusCreated, map[string]interface{}{
 		"word_id": wordID,
@@ -469,11 +426,7 @@ func fillLivecommentResponse(ctx context.Context, tx *sqlx.Tx, livecommentModel 
 		if err := tx.GetContext(ctx, &commentOwnerModel, "SELECT * FROM users WHERE id = ?", livecommentModel.UserID); err != nil {
 			return Livecomment{}, err
 		}
-		var err error
-		commentOwner, err = fillUserResponse(ctx, tx, commentOwnerModel)
-		if err != nil {
-			return Livecomment{}, err
-		}
+		commentOwner = commentOwnerModel.toUser()
 	}
 
 	livecomment := Livecomment{
@@ -504,7 +457,7 @@ func fillLivecommentReportResponse(ctx context.Context, tx *sqlx.Tx, reportModel
 	}
 
 	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags FROM livestreams l WHERE id = ?", livecommentModel.LivestreamID); err != nil {
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livecommentModel.LivestreamID); err != nil {
 		return LivecommentReport{}, err
 	}
 	userMap, err := getUserMap(ctx, tx, []int64{livecommentModel.UserID, livestreamModel.UserID})

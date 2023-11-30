@@ -67,7 +67,7 @@ func getReactionsHandler(c echo.Context) error {
 	}
 
 	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags  FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
 		return err
 	}
 	userIDs := []int64{livestreamModel.UserID}
@@ -147,7 +147,7 @@ func postReactionHandler(c echo.Context) error {
 	reactionModel.ID = reactionID
 
 	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT *,IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ',') FROM livestream_tags WHERE livestream_id=l.id GROUP BY livestream_id),\"\") AS raw_tags  FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
 		return err
 	}
 	userIDs := []int64{reactionModel.UserID, livestreamModel.UserID}
@@ -180,11 +180,7 @@ func fillReactionResponse(ctx context.Context, tx *sqlx.Tx, reactionModel Reacti
 		if err := tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", reactionModel.UserID); err != nil {
 			return Reaction{}, err
 		}
-		var err error
-		user, err = fillUserResponse(ctx, tx, userModel)
-		if err != nil {
-			return Reaction{}, err
-		}
+		user = userModel.toUser()
 	}
 
 	reaction := Reaction{

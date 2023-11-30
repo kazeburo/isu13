@@ -97,6 +97,7 @@ func connectDB(logger echo.Logger) (*sqlx.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
 
 	if err := db.Ping(); err != nil {
 		return nil, err
@@ -106,9 +107,21 @@ func connectDB(logger echo.Logger) (*sqlx.DB, error) {
 }
 
 func initializeHandler(c echo.Context) error {
+	ctx := c.Request().Context()
 	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
 		c.Logger().Warnf("init.sh failed with err=%s", string(out))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
+	}
+
+	if _, err := dbConn.ExecContext(ctx, `UPDATE livestreams u SET raw_tags=IFNULL((SELECT GROUP_CONCAT(tag_id SEPARATOR ",") FROM livestream_tags WHERE livestream_id=u.id GROUP BY livestream_id),"")`); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update livestreams.raw_tags: "+err.Error())
+	}
+
+	if out, err := exec.Command("pdnsutil", "delete-rrset", "u.isucon.dev", "pipe", "A").CombinedOutput(); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
+	}
+	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", "pipe", "A", "30", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
 	}
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
@@ -207,8 +220,6 @@ func main() {
 		e.Logger.Errorf("failed to connect db: %v", err)
 		os.Exit(1)
 	}
-	conn.SetMaxOpenConns(8)
-	conn.SetMaxIdleConns(8)
 	defer conn.Close()
 	dbConn = conn
 
