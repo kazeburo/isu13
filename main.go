@@ -4,6 +4,7 @@ package main
 // sqlx的な参考: https://jmoiron.github.io/sqlx/
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -31,6 +32,10 @@ var (
 	dbConn                   *sqlx.DB
 	secret                   = []byte("isucon13_session_cookiestore_defaultsecret")
 )
+
+type dbtx interface {
+	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+}
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -123,6 +128,8 @@ func initializeHandler(c echo.Context) error {
 	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", "pipe", "A", "30", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
 	}
+
+	warmupUsersCache(ctx)
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -229,6 +236,8 @@ func main() {
 		os.Exit(1)
 	}
 	powerDNSSubdomainAddress = subdomainAddr
+
+	warmupUsersCache(context.Background())
 
 	// HTTPサーバ起動
 	listenAddr := net.JoinHostPort("", strconv.Itoa(listenPort))

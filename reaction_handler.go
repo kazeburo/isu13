@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 )
@@ -46,12 +45,6 @@ func getReactionsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	query := "SELECT * FROM reactions WHERE livestream_id = ? ORDER BY created_at DESC"
 	if c.QueryParam("limit") != "" {
 		limit, err := strconv.Atoi(c.QueryParam("limit"))
@@ -62,39 +55,35 @@ func getReactionsHandler(c echo.Context) error {
 	}
 
 	reactionModels := []ReactionModel{}
-	if err := tx.SelectContext(ctx, &reactionModels, query, livestreamID); err != nil {
+	if err := dbConn.SelectContext(ctx, &reactionModels, query, livestreamID); err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "failed to get reactions")
 	}
 
 	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+	if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
 		return err
 	}
 	userIDs := []int64{livestreamModel.UserID}
 	for i := range reactionModels {
 		userIDs = append(userIDs, reactionModels[i].UserID)
 	}
-	userMap, err := getUserMap(ctx, tx, userIDs)
+	userMap, err := getUserMap(ctx, dbConn, userIDs)
 	if err != nil {
 		return err
 	}
-	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel, userMap)
+	livestream, err := fillLivestreamResponse(ctx, dbConn, livestreamModel, userMap)
 	if err != nil {
 		return err
 	}
 
 	reactions := make([]Reaction, len(reactionModels))
 	for i := range reactionModels {
-		reaction, err := fillReactionResponse(ctx, tx, reactionModels[i], livestream, userMap)
+		reaction, err := fillReactionResponse(ctx, dbConn, reactionModels[i], livestream, userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 		}
 
 		reactions[i] = reaction
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, reactions)
@@ -122,7 +111,7 @@ func postReactionHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
+	tx, err := dbConn.BeginTxx(ctx, nil) // post
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
@@ -171,7 +160,7 @@ func postReactionHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, reaction)
 }
 
-func fillReactionResponse(ctx context.Context, tx *sqlx.Tx, reactionModel ReactionModel, livestream Livestream, usermap map[int64]UserModel) (Reaction, error) {
+func fillReactionResponse(ctx context.Context, tx dbtx, reactionModel ReactionModel, livestream Livestream, usermap map[int64]UserModel) (Reaction, error) {
 	var user User
 	if um, ok := usermap[reactionModel.UserID]; ok {
 		user = um.toUser()

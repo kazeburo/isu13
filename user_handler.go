@@ -11,11 +11,11 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
-	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
@@ -29,7 +29,12 @@ const (
 	bcryptDefaultCost        = bcrypt.MinCost
 )
 
-var fallbackImage = "../img/NoImage.jpg"
+var (
+	fallbackImage = "../img/NoImage.jpg"
+	userLock      sync.RWMutex
+	userCache     map[int64]UserModel
+	userNameCache map[string]int64
+)
 
 type UserModel struct {
 	ID             int64  `db:"id"`
@@ -111,14 +116,9 @@ func getIconHandler(c echo.Context) error {
 
 	username := c.Param("username")
 
-	query := `SELECT id, icon_hash FROM users WHERE name = ?`
-	var user UserModel
-	if err := dbConn.GetContext(ctx, &user, query, username); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
-		}
+	user, exists := getUserByName(username)
+	if !exists {
+		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	}
 
 	match, ok := c.Request().Header["If-None-Match"]
@@ -155,8 +155,9 @@ func postIconHandler(c echo.Context) error {
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
+	iconHash := fmt.Sprintf("%x", sha256.Sum256(req.Image))
 
-	if _, err := dbConn.ExecContext(ctx, "UPDATE users SET icon_hash = ? WHERE id = ?", fmt.Sprintf("%x", sha256.Sum256(req.Image)), userID); err != nil {
+	if _, err := dbConn.ExecContext(ctx, "UPDATE users SET icon_hash = ? WHERE id = ?", iconHash, userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
 	}
 
@@ -173,6 +174,13 @@ func postIconHandler(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted icon id: "+err.Error())
 	}
+
+	userLock.Lock()
+	if u, ok := userCache[userID]; ok {
+		u.IconHash = iconHash
+		userCache[userID] = u
+	}
+	userLock.Unlock()
 
 	return c.JSON(http.StatusCreated, &PostIconResponse{
 		ID: iconID,
@@ -192,14 +200,8 @@ func getMeHandler(c echo.Context) error {
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	userModel := UserModel{}
-	err = tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", userID)
+	err := dbConn.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusNotFound, "not found user that has the userid in session")
 	}
@@ -207,13 +209,9 @@ func getMeHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
-	user, err := fillUserResponse(ctx, tx, userModel)
+	user, err := fillUserResponse(ctx, dbConn, userModel)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, user)
@@ -239,7 +237,7 @@ func registerHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate hashed password: "+err.Error())
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
+	tx, err := dbConn.BeginTxx(ctx, nil) // post
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
@@ -277,6 +275,11 @@ func registerHandler(c echo.Context) error {
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
+
+	userLock.Lock()
+	userCache[userModel.ID] = userModel
+	userNameCache[userModel.Name] = userModel.ID
+	userLock.Unlock()
 
 	return c.JSON(http.StatusCreated, user)
 }
@@ -339,7 +342,6 @@ func loginHandler(c echo.Context) error {
 // ユーザ詳細API
 // GET /api/user/:username
 func getUserHandler(c echo.Context) error {
-	ctx := c.Request().Context()
 	if err := verifyUserSession(c); err != nil {
 		// echo.NewHTTPErrorが返っているのでそのまま出力
 		return err
@@ -347,12 +349,9 @@ func getUserHandler(c echo.Context) error {
 
 	username := c.Param("username")
 
-	userModel := UserModel{}
-	if err := dbConn.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", username); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+	userModel, exists := getUserByName(username)
+	if !exists {
+		return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
 	}
 
 	user := userModel.toUser()
@@ -384,26 +383,67 @@ func verifyUserSession(c echo.Context) error {
 	return nil
 }
 
-func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (User, error) {
+func fillUserResponse(ctx context.Context, tx dbtx, userModel UserModel) (User, error) {
 	return userModel.toUser(), nil
 }
 
-func getUserMap(ctx context.Context, tx *sqlx.Tx, userIDs []int64) (map[int64]UserModel, error) {
+func getUserMap(ctx context.Context, tx dbtx, userIDs []int64) (map[int64]UserModel, error) {
 	userMap := map[int64]UserModel{}
 	if len(userIDs) == 0 {
 		return userMap, nil
 	}
 	slices.Sort(userIDs)
 	userIDs = slices.Compact(userIDs)
-	query := `SELECT * FROM users WHERE id IN (?)`
-	query, params, _ := sqlx.In(query, userIDs)
-	users := make([]UserModel, len(userIDs))
-	if err := tx.SelectContext(ctx, &users, query, params...); err != nil {
-		return nil, err
-	}
-
-	for _, u := range users {
-		userMap[u.ID] = u
+	userLock.RLock()
+	defer userLock.RUnlock()
+	for _, i := range userIDs {
+		if user, ok := userCache[i]; ok {
+			userMap[i] = user
+		}
 	}
 	return userMap, nil
+}
+
+func getUserByName(name string) (UserModel, bool) {
+	userLock.RLock()
+	defer userLock.RUnlock()
+	var userID int64
+	var user UserModel
+	var ok bool
+	if userID, ok = userNameCache[name]; !ok {
+		return UserModel{}, false
+	}
+	if user, ok = userCache[userID]; !ok {
+		return UserModel{}, false
+	}
+	return user, true
+}
+
+func getUserByID(userID int64) (UserModel, bool) {
+	userLock.RLock()
+	defer userLock.RUnlock()
+	var user UserModel
+	var ok bool
+	if user, ok = userCache[userID]; !ok {
+		return UserModel{}, false
+	}
+	return user, true
+}
+
+func warmupUsersCache(ctx context.Context) {
+	uCache := map[int64]UserModel{}
+	nCache := map[string]int64{}
+	users := []UserModel{}
+	query := `SELECT * FROM users`
+	if err := dbConn.SelectContext(ctx, &users, query); err != nil {
+		return
+	}
+	for _, u := range users {
+		uCache[u.ID] = u
+		nCache[u.Name] = u.ID
+	}
+	userLock.Lock()
+	userCache = uCache
+	userNameCache = nCache
+	userLock.Unlock()
 }

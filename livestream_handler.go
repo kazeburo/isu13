@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 )
@@ -99,7 +98,7 @@ func reserveLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
+	tx, err := dbConn.BeginTxx(ctx, nil) // post
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
@@ -197,12 +196,6 @@ func searchLivestreamsHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	keyTagName := c.QueryParam("tag")
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	var livestreamModels []*LivestreamModel
 	if c.QueryParam("tag") != "" {
 		// タグによる取得
@@ -211,7 +204,7 @@ func searchLivestreamsHandler(c echo.Context) error {
 			return c.NoContent(http.StatusNotFound)
 		}
 
-		if err := tx.SelectContext(ctx, &livestreamModels, "SELECT l.* FROM livestreams l JOIN livestream_tags lt ON lt.livestream_id = l.id WHERE tag_id=? GROUP BY l.id ORDER BY l.id DESC", tagID); err != nil {
+		if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT l.* FROM livestreams l JOIN livestream_tags lt ON lt.livestream_id = l.id WHERE tag_id=? GROUP BY l.id ORDER BY l.id DESC", tagID); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 		}
 	} else {
@@ -225,7 +218,7 @@ func searchLivestreamsHandler(c echo.Context) error {
 			query += fmt.Sprintf(" LIMIT %d", limit)
 		}
 
-		if err := tx.SelectContext(ctx, &livestreamModels, query); err != nil {
+		if err := dbConn.SelectContext(ctx, &livestreamModels, query); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 		}
 	}
@@ -235,20 +228,16 @@ func searchLivestreamsHandler(c echo.Context) error {
 	for i := range livestreamModels {
 		userIDs = append(userIDs, livestreamModels[i].UserID)
 	}
-	userMap, err := getUserMap(ctx, tx, userIDs)
+	userMap, err := getUserMap(ctx, dbConn, userIDs)
 	if err != nil {
 		return err
 	}
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
 		livestreams[i] = livestream
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, livestreams)
@@ -260,36 +249,26 @@ func getMyLivestreamsHandler(c echo.Context) error {
 		return err
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	// error already checked
 	sess, _ := session.Get(defaultSessionIDKey, c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var livestreamModels []*LivestreamModel
-	if err := tx.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", userID); err != nil {
+	if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
-	userMap, err := getUserMap(ctx, tx, []int64{userID})
+	userMap, err := getUserMap(ctx, dbConn, []int64{userID})
 	if err != nil {
 		return err
 	}
 	livestreams := make([]Livestream, len(livestreamModels))
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
 		livestreams[i] = livestream
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, livestreams)
@@ -303,24 +282,13 @@ func getUserLivestreamsHandler(c echo.Context) error {
 
 	username := c.Param("username")
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
-	query := `SELECT * FROM users WHERE name = ?`
-	var user UserModel
-	if err := tx.GetContext(ctx, &user, query, username); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
-		}
+	user, exists := getUserByName(username)
+	if !exists {
+		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	}
 
 	var livestreamModels []*LivestreamModel
-	if err := tx.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", user.ID); err != nil {
+	if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", user.ID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 	userMap := map[int64]UserModel{
@@ -328,15 +296,11 @@ func getUserLivestreamsHandler(c echo.Context) error {
 	}
 	livestreams := make([]Livestream, len(livestreamModels))
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
 		livestreams[i] = livestream
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, livestreams)
@@ -360,14 +324,6 @@ func enterLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id must be integer")
 	}
 
-	/*
-		tx, err := dbConn.BeginTxx(ctx, nil)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-		}
-		defer tx.Rollback()
-	*/
-
 	viewer := LivestreamViewerModel{
 		UserID:       int64(userID),
 		LivestreamID: int64(livestreamID),
@@ -377,12 +333,6 @@ func enterLivestreamHandler(c echo.Context) error {
 	if _, err := dbConn.NamedExecContext(ctx, "INSERT INTO livestream_viewers_history (user_id, livestream_id, created_at) VALUES(:user_id, :livestream_id, :created_at)", viewer); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream_view_history: "+err.Error())
 	}
-
-	/*
-		if err := tx.Commit(); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-		}
-	*/
 
 	return c.NoContent(http.StatusOK)
 }
@@ -404,23 +354,9 @@ func exitLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	/*
-		tx, err := dbConn.BeginTxx(ctx, nil)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-		}
-		defer tx.Rollback()
-	*/
-
 	if _, err := dbConn.ExecContext(ctx, "DELETE FROM livestream_viewers_history WHERE user_id = ? AND livestream_id = ?", userID, livestreamID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete livestream_view_history: "+err.Error())
 	}
-
-	/*
-		if err := tx.Commit(); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-		}
-	*/
 
 	return c.NoContent(http.StatusOK)
 }
@@ -437,31 +373,21 @@ func getLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	livestreamModel := LivestreamModel{}
-	err = tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID)
+	err = dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusNotFound, "not found livestream that has the given id")
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 	}
-	userMap, err := getUserMap(ctx, tx, []int64{livestreamModel.UserID})
+	userMap, err := getUserMap(ctx, dbConn, []int64{livestreamModel.UserID})
 	if err != nil {
 		return err
 	}
-	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel, userMap)
+	livestream, err := fillLivestreamResponse(ctx, dbConn, livestreamModel, userMap)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	return c.JSON(http.StatusOK, livestream)
@@ -479,14 +405,8 @@ func getLivecommentReportsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
 	var livestreamModel LivestreamModel
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+	if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 	}
 
@@ -500,27 +420,23 @@ func getLivecommentReportsHandler(c echo.Context) error {
 	}
 
 	var reportModels []*LivecommentReportModel
-	if err := tx.SelectContext(ctx, &reportModels, "SELECT * FROM livecomment_reports WHERE livestream_id = ?", livestreamID); err != nil {
+	if err := dbConn.SelectContext(ctx, &reportModels, "SELECT * FROM livecomment_reports WHERE livestream_id = ?", livestreamID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomment reports: "+err.Error())
 	}
 
 	reports := make([]LivecommentReport, len(reportModels))
 	for _, r := range reportModels {
-		report, err := fillLivecommentReportResponse(ctx, tx, *r)
+		report, err := fillLivecommentReportResponse(ctx, dbConn, *r)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livecomment report: "+err.Error())
 		}
 		reports = append(reports, report)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-	}
-
 	return c.JSON(http.StatusOK, reports)
 }
 
-func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel LivestreamModel, usermap map[int64]UserModel) (Livestream, error) {
+func fillLivestreamResponse(ctx context.Context, tx dbtx, livestreamModel LivestreamModel, usermap map[int64]UserModel) (Livestream, error) {
 	var owner User
 	if um, ok := usermap[livestreamModel.UserID]; ok {
 		owner = um.toUser()
