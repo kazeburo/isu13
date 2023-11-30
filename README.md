@@ -26,9 +26,6 @@ mysql> UPDATE livestreams u SET raw_tags=IFNULL((SELECT GROUP_CONCAT(tag_id SEPA
 move icon_hash to users
 
 ```
-ALTER TABLE icons DROP icon_hash;
-DROP TRIGGER update_icons;
-DROP TRIGGER insert_icons;
 ALTER TABLE users ADD icon_hash VARCHAR(255) NOT NULL DEFAULT "" AFTER description;
 ```
 
