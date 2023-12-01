@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/goccy/go-json"
+	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
 
@@ -130,6 +131,7 @@ func initializeHandler(c echo.Context) error {
 	}
 
 	warmupUsersCache(ctx)
+	warmupLivestreamCache(ctx)
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -238,6 +240,17 @@ func main() {
 	powerDNSSubdomainAddress = subdomainAddr
 
 	warmupUsersCache(context.Background())
+	warmupLivestreamCache(context.Background())
+
+	fiberApp := fiber.New(fiber.Config{
+		DisableDefaultDate: true,
+	})
+
+	fiberApp.Get("/api/user/:username/icon", getIconFiber)
+
+	go func() {
+		fiberApp.Listen(":3000")
+	}()
 
 	// HTTPサーバ起動
 	listenAddr := net.JoinHostPort("", strconv.Itoa(listenPort))

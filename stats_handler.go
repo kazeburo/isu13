@@ -178,14 +178,16 @@ func getLivestreamStatisticsHandler(c echo.Context) error {
 	}
 	livestreamID := int64(id)
 
-	var livestream LivestreamModel
-	if err := dbConn.GetContext(ctx, &livestream, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusBadRequest, "cannot get stats of not found livestream")
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+	/*
+		var livestream LivestreamModel
+		if err := dbConn.GetContext(ctx, &livestream, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return echo.NewHTTPError(http.StatusBadRequest, "cannot get stats of not found livestream")
+			} else {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+			}
 		}
-	}
+	*/
 
 	// ランク算出
 	var rank int64

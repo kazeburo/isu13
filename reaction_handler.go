@@ -45,7 +45,7 @@ func getReactionsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	query := "SELECT * FROM reactions WHERE livestream_id = ? ORDER BY created_at DESC"
+	query := "SELECT * FROM reactions WHERE livestream_id = ? ORDER BY id DESC"
 	if c.QueryParam("limit") != "" {
 		limit, err := strconv.Atoi(c.QueryParam("limit"))
 		if err != nil {
@@ -59,10 +59,16 @@ func getReactionsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "failed to get reactions")
 	}
 
-	livestreamModel := LivestreamModel{}
-	if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-		return err
+	livestreamModel, exists := getLivestreamByID(int64(livestreamID))
+	if !exists {
+		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
+	/*
+		livestreamModel := LivestreamModel{}
+		if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+			return err
+		}
+	*/
 	userIDs := []int64{livestreamModel.UserID}
 	for i := range reactionModels {
 		userIDs = append(userIDs, reactionModels[i].UserID)
@@ -135,10 +141,16 @@ func postReactionHandler(c echo.Context) error {
 	}
 	reactionModel.ID = reactionID
 
-	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-		return err
+	livestreamModel, exists := getLivestreamByID(int64(livestreamID))
+	if !exists {
+		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
+	/*
+		livestreamModel := LivestreamModel{}
+		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
+			return err
+		}
+	*/
 	userIDs := []int64{reactionModel.UserID, livestreamModel.UserID}
 	userMap, err := getUserMap(ctx, tx, userIDs)
 	if err != nil {

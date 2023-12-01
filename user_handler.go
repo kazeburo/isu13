@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -14,10 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
+	"github.com/valyala/fasthttp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -136,6 +139,31 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	return c.Blob(http.StatusOK, "image/jpeg", image)
+}
+
+func getIconFiber(c *fiber.Ctx) error {
+
+	username := c.Params("username")
+	user, exists := getUserByName(username)
+	if !exists {
+		return c.Status(fasthttp.StatusNotFound).SendString("user not found: " + username)
+	}
+
+	noneMatch := c.Request().Header.Peek(fasthttp.HeaderIfNoneMatch)
+	if len(noneMatch) > 0 && bytes.Contains(noneMatch, []byte(user.IconHash)) {
+		return c.SendStatus(fasthttp.StatusNotModified)
+	}
+
+	var image []byte
+	if err := dbConn.GetContext(c.Context(), &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return c.SendFile(fallbackImage)
+		} else {
+			return c.Status(fasthttp.StatusInternalServerError).SendString("failed to get user icon: " + err.Error())
+		}
+	}
+
+	return c.Status(fasthttp.StatusOK).Type("image/jpeg").Send(image)
 }
 
 func postIconHandler(c echo.Context) error {

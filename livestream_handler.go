@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo-contrib/session"
@@ -71,6 +70,11 @@ type ReservationSlotModel struct {
 var TagMap = map[int64]Tag{}
 var TagIDMap = map[string]int64{}
 var Tags = []string{"ライブ配信", "ゲーム実況", "生放送", "アドバイス", "初心者歓迎", "プロゲーマー", "新作ゲーム", "レトロゲーム", "RPG", "FPS", "アクションゲーム", "対戦ゲーム", "マルチプレイ", "シングルプレイ", "ゲーム解説", "ホラーゲーム", "イベント生放送", "新情報発表", "Q&Aセッション", "チャット交流", "視聴者参加", "音楽ライブ", "カバーソング", "オリジナル楽曲", "アコースティック", "歌配信", "楽器演奏", "ギター", "ピアノ", "バンドセッション", "DJセット", "トーク配信", "朝活", "夜ふかし", "日常話", "趣味の話", "語学学習", "お料理配信", "手料理", "レシピ紹介", "アート配信", "絵描き", "DIY", "手芸", "アニメトーク", "映画レビュー", "読書感想", "ファッション", "メイク", "ビューティー", "健康", "ワークアウト", "ヨガ", "ダンス", "旅行記", "アウトドア", "キャンプ", "ペットと一緒", "猫", "犬", "釣り", "ガーデニング", "テクノロジー", "ガジェット紹介", "プログラミング", "DIY電子工作", "ニュース解説", "歴史", "文化", "社会問題", "心理学", "宇宙", "科学", "マジック", "コメディ", "スポーツ", "サッカー", "野球", "バスケットボール", "ライフハック", "教育", "子育て", "ビジネス", "起業", "投資", "仮想通貨", "株式投資", "不動産", "キャリア", "スピリチュアル", "占い", "手相", "オカルト", "UFO", "都市伝説", "コンサート", "ファンミーティング", "コラボ配信", "記念配信", "生誕祭", "周年記念", "サプライズ", "椅子"}
+
+var (
+	livestreamLock  sync.RWMutex
+	livestreamCache map[int64]LivestreamModel
+)
 
 func init() {
 	for i, t := range Tags {
@@ -184,6 +188,10 @@ func reserveLivestreamHandler(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 	}
+
+	livestreamLock.Lock()
+	livestreamCache[livestreamModel.ID] = *livestreamModel
+	livestreamLock.Unlock()
 
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
@@ -373,14 +381,20 @@ func getLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	livestreamModel := LivestreamModel{}
-	err = dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusNotFound, "not found livestream that has the given id")
+	livestreamModel, exists := getLivestreamByID(int64(livestreamID))
+	if !exists {
+		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
-	}
+	/*
+		livestreamModel := LivestreamModel{}
+		err = dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "not found livestream that has the given id")
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+		}
+	*/
 	userMap, err := getUserMap(ctx, dbConn, []int64{livestreamModel.UserID})
 	if err != nil {
 		return err
@@ -405,10 +419,16 @@ func getLivecommentReportsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	var livestreamModel LivestreamModel
-	if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+	livestreamModel, exists := getLivestreamByID(int64(livestreamID))
+	if !exists {
+		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
+	/*
+		var livestreamModel LivestreamModel
+		if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+		}
+	*/
 
 	// error already check
 	sess, _ := session.Get(defaultSessionIDKey, c)
@@ -493,4 +513,30 @@ func fillLivestreamResponse(ctx context.Context, tx dbtx, livestreamModel Livest
 		EndAt:        livestreamModel.EndAt,
 	}
 	return livestream, nil
+}
+
+func getLivestreamByID(id int64) (LivestreamModel, bool) {
+	livestreamLock.RLock()
+	defer livestreamLock.RUnlock()
+	var livestream LivestreamModel
+	var ok bool
+	if livestream, ok = livestreamCache[id]; !ok {
+		return LivestreamModel{}, false
+	}
+	return livestream, true
+}
+
+func warmupLivestreamCache(ctx context.Context) {
+	lCache := map[int64]LivestreamModel{}
+	livestreams := []LivestreamModel{}
+	query := `SELECT * FROM livestreams`
+	if err := dbConn.SelectContext(ctx, &livestreams, query); err != nil {
+		return
+	}
+	for _, l := range livestreams {
+		lCache[l.ID] = l
+	}
+	livestreamLock.Lock()
+	livestreamCache = lCache
+	livestreamLock.Unlock()
 }
