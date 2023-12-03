@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -115,13 +117,12 @@ func (m UserModel) toUser() User {
 }
 
 func getIconHandler(c echo.Context) error {
-	ctx := c.Request().Context()
 
 	username := c.Param("username")
 
 	user, exists := getUserByName(username)
 	if !exists {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return echo.NewHTTPError(http.StatusNotFound, "user not found: "+username)
 	}
 
 	match, ok := c.Request().Header["If-None-Match"]
@@ -130,7 +131,7 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	var image []byte
-	if err := dbConn.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
+	if err := dbConn.GetContext(context.Background(), &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.File(fallbackImage)
 		} else {
@@ -139,6 +140,15 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	return c.Blob(http.StatusOK, "image/jpeg", image)
+}
+
+func UnsafeBytes(s string) (bs []byte) {
+	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	bh := (*reflect.SliceHeader)(unsafe.Pointer(&bs))
+	bh.Data = sh.Data
+	bh.Len = sh.Len
+	bh.Cap = sh.Len
+	return
 }
 
 func getIconFiber(c *fiber.Ctx) error {
@@ -150,7 +160,7 @@ func getIconFiber(c *fiber.Ctx) error {
 	}
 
 	noneMatch := c.Request().Header.Peek(fasthttp.HeaderIfNoneMatch)
-	if len(noneMatch) > 0 && bytes.Contains(noneMatch, []byte(user.IconHash)) {
+	if len(noneMatch) > 0 && bytes.Contains(noneMatch, UnsafeBytes(user.IconHash)) {
 		return c.SendStatus(fasthttp.StatusNotModified)
 	}
 
@@ -456,6 +466,16 @@ func getUserByID(userID int64) (UserModel, bool) {
 		return UserModel{}, false
 	}
 	return user, true
+}
+
+func getUserAll() []UserModel {
+	userLock.RLock()
+	defer userLock.RUnlock()
+	users := make([]UserModel, len(userCache))
+	for _, u := range userCache {
+		users = append(users, u)
+	}
+	return users
 }
 
 func warmupUsersCache(ctx context.Context) {

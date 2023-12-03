@@ -385,16 +385,7 @@ func getLivestreamHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		livestreamModel := LivestreamModel{}
-		err = dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "not found livestream that has the given id")
-		}
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
-		}
-	*/
+
 	userMap, err := getUserMap(ctx, dbConn, []int64{livestreamModel.UserID})
 	if err != nil {
 		return err
@@ -423,12 +414,6 @@ func getLivecommentReportsHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		var livestreamModel LivestreamModel
-		if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
-		}
-	*/
 
 	// error already check
 	sess, _ := session.Get(defaultSessionIDKey, c)
@@ -524,6 +509,16 @@ func getLivestreamByID(id int64) (LivestreamModel, bool) {
 		return LivestreamModel{}, false
 	}
 	return livestream, true
+}
+
+func getLivestreamAll() []LivestreamModel {
+	livestreamLock.RLock()
+	defer livestreamLock.RUnlock()
+	livestreams := make([]LivestreamModel, len(livestreamCache))
+	for _, l := range livestreamCache {
+		livestreams = append(livestreams, l)
+	}
+	return livestreams
 }
 
 func warmupLivestreamCache(ctx context.Context) {

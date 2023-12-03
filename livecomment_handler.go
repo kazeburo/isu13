@@ -99,12 +99,7 @@ func getLivecommentsHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		livestreamModel := LivestreamModel{}
-		if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-			return err
-		}
-	*/
+
 	userIDs := []int64{livestreamModel.UserID}
 	for i := range livecommentModels {
 		userIDs = append(userIDs, livecommentModels[i].UserID)
@@ -193,16 +188,6 @@ func postLivecommentHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		var livestreamModel LivestreamModel
-		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return echo.NewHTTPError(http.StatusNotFound, "livestream not found")
-			} else {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
-			}
-		}
-	*/
 
 	// スパム判定
 	var ngwords []*NGWord
@@ -288,17 +273,6 @@ func reportLivecommentHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
-
-	/*
-		var livestreamModel LivestreamModel
-		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return echo.NewHTTPError(http.StatusNotFound, "livestream not found")
-			} else {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
-			}
-		}
-	*/
 
 	var livecommentModel LivecommentModel
 	if err := tx.GetContext(ctx, &livecommentModel, "SELECT * FROM livecomments WHERE id = ?", livecommentID); err != nil {
@@ -453,12 +427,7 @@ func fillLivecommentReportResponse(ctx context.Context, tx dbtx, reportModel Liv
 	if !exists {
 		return LivecommentReport{}, fmt.Errorf("livestream %d not found", livecommentModel.LivestreamID)
 	}
-	/*
-		livestreamModel := LivestreamModel{}
-		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livecommentModel.LivestreamID); err != nil {
-			return LivecommentReport{}, err
-		}
-	*/
+
 	userMap, err := getUserMap(ctx, tx, []int64{livecommentModel.UserID, livestreamModel.UserID})
 	if err != nil {
 		return LivecommentReport{}, err

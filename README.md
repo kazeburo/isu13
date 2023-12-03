@@ -74,7 +74,7 @@ score 57779b138135e7c148755439a479fd632d07a982
 2023-11-30T12:04:10.379Z        info    staff-logger    bench/bench.go:335      スコア: 218103
 ```
 
-score HEAD
+score f13772f7e436b0b2dffb6c4f7cef84885af82fa6
 
 ```
 2023-12-01T12:57:51.593Z        info    staff-logger    bench/bench.go:301      シナリオカウンタを出力します
@@ -93,4 +93,81 @@ score HEAD
 2023-12-01T12:57:51.593Z        info    staff-logger    bench/bench.go:330      名前解決成功数: 427
 2023-12-01T12:57:51.593Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 112
 2023-12-01T12:57:51.593Z        info    staff-logger    bench/bench.go:335      スコア: 272355
+```
+
+```
+CREATE TABLE `livestream_score` (
+  `livestream_id` BIGINT NOT NULL PRIMARY KEY,
+  `user_id` BIGINT NOT NULL,
+  `score` BIGINT NOT NULL DEFAULT '0'
+) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+
+alter table livestream_score add index idx_user_id(user_id,score);
+
+DELIMITER $$
+CREATE TRIGGER insert_livestreams
+AFTER INSERT ON livestreams
+FOR EACH ROW
+BEGIN
+INSERT INTO livestream_score (livestream_id, user_id, score) VALUES (NEW.id, NEW.user_id, 0);
+END
+$$
+
+DELIMITER $$
+CREATE TRIGGER insert_livecomments
+AFTER INSERT ON livecomments
+FOR EACH ROW
+BEGIN
+UPDATE livestream_score SET score = score + NEW.tip WHERE livestream_id = NEW.livestream_id;
+END
+$$
+
+DELIMITER $$
+CREATE TRIGGER delete_livecomments
+AFTER DELETE ON livecomments
+FOR EACH ROW
+BEGIN
+UPDATE livestream_score SET score = score - OLD.tip WHERE livestream_id = OLD.livestream_id;
+END
+$$
+
+DELIMITER $$
+CREATE TRIGGER insert_reactions
+AFTER INSERT ON reactions
+FOR EACH ROW
+BEGIN
+UPDATE livestream_score SET score = score + 1 WHERE livestream_id = NEW.livestream_id;
+END
+$$
+
+DELIMITER $$
+CREATE TRIGGER delete_reactions
+AFTER DELETE ON reactions
+FOR EACH ROW
+BEGIN
+UPDATE livestream_score SET score = score - 1 WHERE livestream_id = OLD.livestream_id;
+END
+$$
+
+```
+
+score HEAD
+
+```
+2023-12-03T13:57:21.474Z        info    isupipe-benchmarker     配信を最後まで視聴できた視聴者数        {"viewers": 1454}
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ aggressive-streamer-moderate] 10 回成功, 2 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ dns-watertorture-attack] 1 回成功
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-cold-reserve] 1291 回成功, 53 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-moderate] 701 回成功, 17 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-report] 59 回成功
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-spam] 12 回成功
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer] 1454 回成功, 10 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ aggressive-streamer-moderate-fail] 2 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-cold-reserve-fail] 53 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-moderate-fail] 17 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ viewer-fail] 10 回失敗
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:329      DNSAttacker並列数: 2
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:330      名前解決成功数: 424
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 118
+2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:335      スコア: 282495
 ```

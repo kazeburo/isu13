@@ -63,12 +63,7 @@ func getReactionsHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		livestreamModel := LivestreamModel{}
-		if err := dbConn.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-			return err
-		}
-	*/
+
 	userIDs := []int64{livestreamModel.UserID}
 	for i := range reactionModels {
 		userIDs = append(userIDs, reactionModels[i].UserID)
@@ -145,12 +140,7 @@ func postReactionHandler(c echo.Context) error {
 	if !exists {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
-	/*
-		livestreamModel := LivestreamModel{}
-		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams l WHERE id = ?", livestreamID); err != nil {
-			return err
-		}
-	*/
+
 	userIDs := []int64{reactionModel.UserID, livestreamModel.UserID}
 	userMap, err := getUserMap(ctx, tx, userIDs)
 	if err != nil {
