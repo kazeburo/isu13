@@ -1,6 +1,6 @@
 Server Environment
 
-- Application 2core/4GB on さくらのクラウド
+- Application 2core/4GB x 1 on さくらのクラウド
 - Benchmarer 4core/8GB on さくらのクラウド
 
 index
