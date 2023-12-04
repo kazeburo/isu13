@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo-contrib/session"
+	"github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 )
 
@@ -133,10 +132,8 @@ func getNgwords(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
 	if err != nil {
@@ -168,10 +165,8 @@ func postLivecommentHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var req *PostLivecommentRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
@@ -263,10 +258,8 @@ func reportLivecommentHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livecomment_id in path must be integer")
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	tx, err := dbConn.BeginTxx(ctx, nil) // post
 	if err != nil {
@@ -325,10 +318,8 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var req *ModerateRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {

@@ -151,7 +151,7 @@ $$
 
 ```
 
-score HEAD
+score 4fef946f98d3e9f81bb0e8ecdd88d2fedbedab73
 
 ```
 2023-12-03T13:57:21.474Z        info    isupipe-benchmarker     配信を最後まで視聴できた視聴者数        {"viewers": 1454}
@@ -170,4 +170,23 @@ score HEAD
 2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:330      名前解決成功数: 424
 2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 118
 2023-12-03T13:57:21.474Z        info    staff-logger    bench/bench.go:335      スコア: 282495
+```
+
+score HEAD
+
+```
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:301      シナリオカウンタを出力します
+2023-12-04T11:54:56.871Z        info    isupipe-benchmarker     配信を最後まで視聴できた視聴者数        {"viewers": 1604}
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ aggressive-streamer-moderate] 11 回成功
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-cold-reserve] 1303 回成功, 60 回失敗
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-moderate] 761 回成功, 20 回失敗
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-report] 59 回成功
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-spam] 13 回成功
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer] 1604 回成功
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-cold-reserve-fail] 60 回失敗
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-moderate-fail] 20 回失敗
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:329      DNSAttacker並列数: 2
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:330      名前解決成功数: 440
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 117
+2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:335      スコア: 311636
 ```

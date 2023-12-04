@@ -18,9 +18,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
-
-	"github.com/gorilla/sessions"
-	"github.com/labstack/echo-contrib/session"
 )
 
 const (
@@ -114,6 +111,11 @@ func connectDB(logger echo.Logger) (*sqlx.DB, error) {
 
 func initializeHandler(c echo.Context) error {
 	ctx := c.Request().Context()
+
+	if _, err := dbConn.ExecContext(ctx, `TRUNCATE TABLE livestream_score`); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to truncate score: "+err.Error())
+	}
+
 	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
 		c.Logger().Warnf("init.sh failed with err=%s", string(out))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
@@ -162,9 +164,9 @@ func main() {
 	// e.Logger.SetLevel(echolog.DEBUG)
 	// e.Use(middleware.Logger())
 	e.JSONSerializer = &JSONSerializer{}
-	cookieStore := sessions.NewCookieStore(secret)
-	cookieStore.Options.Domain = "*.u.isucon.dev"
-	e.Use(session.Middleware(cookieStore))
+	//cookieStore := sessions.NewCookieStore(secret)
+	//cookieStore.Options.Domain = "*.u.isucon.dev"
+	//e.Use(session.Middleware(cookieStore))
 	// e.Use(middleware.Recover())
 
 	// 初期化

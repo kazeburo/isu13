@@ -74,6 +74,12 @@ type ScoreModel struct {
 	Score int64 `db:"score"`
 }
 
+type reactionCountModel struct {
+	TotalLivecomments int64 `db:"total_livecomments"`
+	TotalTip          int64 `db:"total_tip"`
+	Viewers           int64 `db:"viewers"`
+}
+
 var userRankingSingleflight singleflight.Group
 
 func getUserRanking(username string) (int64, error) {
@@ -144,34 +150,26 @@ func getUserStatisticsHandler(c echo.Context) error {
 	}
 
 	// ライブコメント数、チップ合計
-	var totalLivecomments int64
-	var totalTip int64
-	var livestreams []*LivestreamModel
-	if err := dbConn.SelectContext(ctx, &livestreams, "SELECT * FROM livestreams WHERE user_id = ?", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// 合計視聴者数
+
+	var reactionCount reactionCountModel
+	query = `
+SELECT
+COUNT(c.id) AS total_livecomments,
+COUNT(DISTINCT h.id) AS viewers,
+IFNULL(SUM(c.tip),0) AS total_tip
+FROM livestreams l
+INNER JOIN livecomments c ON c.livestream_id = l.id
+INNER JOIN livestream_viewers_history h ON h.livestream_id = l.id
+WHERE l.user_id = ?
+`
+	if err := dbConn.GetContext(ctx, &reactionCount, query, user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 
-	for _, livestream := range livestreams {
-		var livecomments []*LivecommentModel
-		if err := dbConn.SelectContext(ctx, &livecomments, "SELECT * FROM livecomments WHERE livestream_id = ?", livestream.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
-		}
-
-		for _, livecomment := range livecomments {
-			totalTip += livecomment.Tip
-			totalLivecomments++
-		}
-	}
-
-	// 合計視聴者数
-	var viewersCount int64
-	for _, livestream := range livestreams {
-		var cnt int64
-		if err := dbConn.GetContext(ctx, &cnt, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id = ?", livestream.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
-		}
-		viewersCount += cnt
-	}
+	totalTip := reactionCount.TotalTip
+	totalLivecomments := reactionCount.TotalLivecomments
+	viewersCount := reactionCount.Viewers
 
 	// お気に入り絵文字
 	var favoriteEmoji string

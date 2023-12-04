@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/labstack/echo-contrib/session"
+	"github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 )
 
@@ -102,10 +101,8 @@ func postReactionHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var req *PostReactionRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {

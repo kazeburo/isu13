@@ -5,9 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"reflect"
@@ -17,11 +18,10 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
-	"github.com/gorilla/sessions"
-	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
+	"github.com/mojura/enkodo"
 	"github.com/valyala/fasthttp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -184,10 +184,8 @@ func postIconHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var req *PostIconRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
@@ -233,10 +231,8 @@ func getMeHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	userModel := UserModel{}
 	err := dbConn.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", userID)
@@ -351,28 +347,10 @@ func loginHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to compare hash and password: "+err.Error())
 	}
 
-	sessionEndAt := time.Now().Add(1 * time.Hour)
-
-	sessionID := uuid.NewString()
-
-	sess, err := session.Get(defaultSessionIDKey, c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get session")
-	}
-
-	sess.Options = &sessions.Options{
-		Domain: "u.isucon.dev",
-		MaxAge: int(60000),
-		Path:   "/",
-	}
-	sess.Values[defaultSessionIDKey] = sessionID
-	sess.Values[defaultUserIDKey] = userModel.ID
-	sess.Values[defaultUsernameKey] = userModel.Name
-	sess.Values[defaultSessionExpiresKey] = sessionEndAt.Unix()
-
-	if err := sess.Save(c.Request(), c.Response()); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save session: "+err.Error())
-	}
+	sess := getSession(c)
+	sess.Values.UserID = userModel.ID
+	sess.Values.UserName = userModel.Name
+	sess.Save(c)
 
 	return c.NoContent(http.StatusOK)
 }
@@ -398,26 +376,11 @@ func getUserHandler(c echo.Context) error {
 }
 
 func verifyUserSession(c echo.Context) error {
-	sess, err := session.Get(defaultSessionIDKey, c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get session")
-	}
-
-	sessionExpires, ok := sess.Values[defaultSessionExpiresKey]
-	if !ok {
-		return echo.NewHTTPError(http.StatusForbidden, "failed to get EXPIRES value from session")
-	}
-
-	_, ok = sess.Values[defaultUserIDKey].(int64)
-	if !ok {
+	sess := getSession(c)
+	userID := sess.Values.UserID
+	if userID == 0 {
 		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get USERID value from session")
 	}
-
-	now := time.Now()
-	if now.Unix() > sessionExpires.(int64) {
-		return echo.NewHTTPError(http.StatusUnauthorized, "session has expired")
-	}
-
 	return nil
 }
 
@@ -494,4 +457,82 @@ func warmupUsersCache(ctx context.Context) {
 	userCache = uCache
 	userNameCache = nCache
 	userLock.Unlock()
+}
+
+type simpleCookie struct {
+	Values sessionData
+	Key    string
+}
+
+type sessionData struct {
+	UserID   int64
+	UserName string
+}
+
+func (s *sessionData) MarshalEnkodo(enc *enkodo.Encoder) error {
+	enc.Int64(s.UserID)
+	enc.String(s.UserName)
+	return nil
+}
+
+func (s *sessionData) UnmarshalEnkodo(dec *enkodo.Decoder) error {
+	var err error
+	if s.UserID, err = dec.Int64(); err != nil {
+		return err
+	}
+
+	if s.UserName, err = dec.String(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *simpleCookie) Save(c echo.Context) error {
+	bs, err := enkodo.Marshal(&s.Values)
+	if err != nil {
+		return err
+	}
+	cookie := new(http.Cookie)
+	cookie.Name = defaultSessionIDKey
+	cookie.Value = base64.StdEncoding.EncodeToString(bs)
+	cookie.Expires = time.Now().Add(24 * time.Hour)
+	cookie.Path = "/"
+	cookie.Domain = "u.isucon.dev"
+	c.SetCookie(cookie)
+	return nil
+}
+
+func getSession(c echo.Context) *simpleCookie {
+	session, err := readSession(c, defaultSessionIDKey)
+	if err != nil {
+		log.Print(err)
+	}
+	return session
+}
+
+func readSession(c echo.Context, key string) (*simpleCookie, error) {
+	s := c.Get(key)
+	if s != nil {
+		return s.(*simpleCookie), nil
+	}
+	var sd sessionData
+	cookies, err := c.Cookie(key)
+	if err == nil {
+		if cookie := cookies.Value; cookie != "" {
+			data, err := base64.StdEncoding.DecodeString(cookie)
+			if err != nil {
+				return nil, err
+			}
+			if err := enkodo.Unmarshal(data, &sd); err != nil {
+				return nil, err
+			}
+		}
+	}
+	newSession := &simpleCookie{
+		Values: sd,
+		Key:    key,
+	}
+	c.Set(key, newSession)
+	return newSession, nil
 }

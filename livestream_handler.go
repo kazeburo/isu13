@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/labstack/echo-contrib/session"
+	"github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 )
 
@@ -92,10 +91,8 @@ func reserveLivestreamHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var req *ReserveLivestreamRequest
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
@@ -171,12 +168,17 @@ func reserveLivestreamHandler(c echo.Context) error {
 	livestreamModel.ID = livestreamID
 
 	// タグ追加
-	for _, tagID := range req.Tags {
-		if _, err := tx.NamedExecContext(ctx, "INSERT INTO livestream_tags (livestream_id, tag_id) VALUES (:livestream_id, :tag_id)", &LivestreamTagModel{
-			LivestreamID: livestreamID,
-			TagID:        tagID,
-		}); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream tag: "+err.Error())
+	if len(req.Tags) > 0 {
+		values := []string{}
+		params := []any{}
+		for _, tagID := range req.Tags {
+			values = append(values, "(?, ?)")
+			params = append(params, livestreamID, tagID)
+		}
+		query := `INSERT INTO livestream_tags (livestream_id, tag_id) VALUES ` + strings.Join(values, ", ")
+		_, err = tx.ExecContext(ctx, query, params...)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert tags: "+err.Error())
 		}
 	}
 
@@ -257,10 +259,8 @@ func getMyLivestreamsHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	var livestreamModels []*LivestreamModel
 	if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", userID); err != nil {
@@ -322,10 +322,8 @@ func enterLivestreamHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
 	if err != nil {
@@ -352,10 +350,8 @@ func exitLivestreamHandler(c echo.Context) error {
 		return err
 	}
 
-	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already checked
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
 	if err != nil {
@@ -415,10 +411,8 @@ func getLivecommentReportsHandler(c echo.Context) error {
 		return fmt.Errorf("livestream %d not found", livestreamID)
 	}
 
-	// error already check
-	sess, _ := session.Get(defaultSessionIDKey, c)
-	// existence already check
-	userID := sess.Values[defaultUserIDKey].(int64)
+	sess := getSession(c)
+	userID := sess.Values.UserID
 
 	if livestreamModel.UserID != userID {
 		return echo.NewHTTPError(http.StatusForbidden, "can't get other streamer's livecomment reports")
