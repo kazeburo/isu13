@@ -12,11 +12,10 @@ mysql> alter table livestreams add index idx_user_id (user_id);
 mysql> alter table icons add index idx_user_id (user_id);
 mysql> alter table livecomments add index idx_livestream_id (livestream_id);
 mysql> alter table themes add index idx_user_id (user_id);
-mysql> alter table reactions add index idx_livestream_id(livestream_id,created_at);
+mysql> alter table reactions add index idx_livestream_id(livestream_id);
 mysql> alter table livestream_viewers_history add index idx_user_id_livestream_id  (user_id, livestream_id);
-mysql> alter table ng_words add index idx_livestream_id_user_id (livestream_id,user_id);
-mysql> alter table reservation_slots add index idx_start_end (start_at, end_at);
 mysql> alter table livecomment_reports add index idx_livestream_id(livestream_id);
+mysql> alter table ng_words drop index ng_words_word;
 ```
 
 

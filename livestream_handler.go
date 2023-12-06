@@ -132,18 +132,6 @@ func reserveLivestreamHandler(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 		// return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("予約期間 %d ~ %dに対して、予約区間 %d(%f) ~ %d(%f)が予約できません", termStartAt.Unix(), termEndAt.Unix(), req.StartAt, startIndex, req.EndAt, endIndex))
 	}
-	/*
-		for _, slot := range slots {
-			var count int
-			if err := tx.GetContext(ctx, &count, "SELECT slot FROM reservation_slots WHERE start_at = ? AND end_at = ?", slot.StartAt, slot.EndAt); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get reservation_slots: "+err.Error())
-			}
-			c.Logger().Infof("%d ~ %d予約枠の残数 = %d\n", slot.StartAt, slot.EndAt, slot.Slot)
-			if count < 1 {
-				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("予約期間 %d ~ %dに対して、予約区間 %d ~ %dが予約できません", termStartAt.Unix(), termEndAt.Unix(), req.StartAt, req.EndAt))
-			}
-		}
-	*/
 
 	tagIDs := []string{}
 	for _, tagID := range req.Tags {

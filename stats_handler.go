@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
-	"golang.org/x/sync/singleflight"
 )
 
 type LivestreamStatistics struct {
@@ -79,8 +78,6 @@ type reactionCountModel struct {
 	TotalTip          int64 `db:"total_tip"`
 	Viewers           int64 `db:"viewers"`
 }
-
-var userRankingSingleflight singleflight.Group
 
 func getUserRanking(username string) (int64, error) {
 	query := `SELECT user_id AS id, SUM(score) AS score FROM livestream_score GROUP BY user_id`
@@ -249,26 +246,6 @@ func getLivestreamStatisticsHandler(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to calc ranking "+err.Error())
 	}
-
-	/*
-		var rank int64
-		query := `
-			WITH reaction_per_stream AS (
-			  SELECT r.livestream_id AS livestream_id, COUNT(*) AS reaction_count FROM reactions r
-			GROUP BY r.livestream_id
-			), tip_per_strea AS (
-			  SELECT c.livestream_id AS livestream_id, IFNULL(SUM(c.tip), 0) AS sum_tip FROM livecomments c GROUP BY c.livestream_id
-			), ranking_score AS (
-			  SELECT reaction_per_stream.livestream_id, (IFNULL(reaction_count, 0) + IFNULL(sum_tip, 0)) AS score FROM reaction_per_stream LEFT OUTER JOIN tip_per_strea ON reaction_per_stream.livestream_id = tip_per_strea.livestream_id
-			), ranking_per_stream AS (
-			  SELECT livestreams.id AS livestream_id, IFNULL(ranking_score.score, 0), ROW_NUMBER() OVER w AS 'ranking' FROM livestreams LEFT JOIN ranking_score ON livestreams.id = ranking_score.livestream_id WINDOW w AS (ORDER BY ranking_score.score DESC, livestreams.id DESC)
-			)
-			SELECT ranking FROM ranking_per_stream WHERE livestream_id = ?
-		`
-		if err := dbConn.GetContext(ctx, &rank, query, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to count rank reactions: "+err.Error())
-		}
-	*/
 
 	// 視聴者数算出
 	var viewersCount int64
