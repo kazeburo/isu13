@@ -191,7 +191,7 @@ score f898e7d2a1ae4a8392c18916a49954a7170c3d38
 2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:335      スコア: 311636
 ```
 
-score HEAD
+score 851176bbbcacd342a3efa9d7e4dce2d882e98a94
 
 ```
 2023-12-05T15:52:59.559Z        info    staff-logger    bench/bench.go:301      シナリオカウンタを出力します
@@ -212,3 +212,23 @@ score HEAD
 2023-12-05T15:52:59.559Z        info    staff-logger    bench/bench.go:335      スコア: 390127
 ```
 
+score HEAD
+
+```
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:301      シナリオカウンタを出力します
+2023-12-06T10:12:01.077Z        info    isupipe-benchmarker     配信を最後まで視聴できた視聴者数        {"viewers": 2866}
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ aggressive-streamer-moderate] 25 回成功, 1 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-cold-reserve] 628 回成功, 7823 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ streamer-moderate] 1457 回成功, 24 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-report] 59 回成功
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer-spam] 26 回成功
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [シナリオ viewer] 2866 回成功, 10 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ aggressive-streamer-moderate-fail] 1 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-cold-reserve-fail] 7823 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ streamer-moderate-fail] 24 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:323      [失敗シナリオ viewer-fail] 10 回失敗
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:329      DNSAttacker並列数: 2
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:330      名前解決成功数: 521
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 115
+2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:335      スコア: 410319
+```

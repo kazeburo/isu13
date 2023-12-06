@@ -134,6 +134,7 @@ func initializeHandler(c echo.Context) error {
 
 	warmupUsersCache(ctx)
 	warmupLivestreamCache(ctx)
+	warmupNGWordCache(ctx)
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -243,6 +244,7 @@ func main() {
 
 	warmupUsersCache(context.Background())
 	warmupLivestreamCache(context.Background())
+	warmupNGWordCache(context.Background())
 
 	fiberApp := fiber.New(fiber.Config{
 		DisableDefaultDate: true,

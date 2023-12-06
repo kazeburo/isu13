@@ -217,7 +217,7 @@ func searchLivestreamsHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	keyTagName := c.QueryParam("tag")
 
-	var livestreamModels []*LivestreamModel
+	var livestreamIDs []int64
 	if c.QueryParam("tag") != "" {
 		// タグによる取得
 		tagID, ok := TagIDMap[keyTagName]
@@ -225,12 +225,12 @@ func searchLivestreamsHandler(c echo.Context) error {
 			return c.NoContent(http.StatusNotFound)
 		}
 
-		if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT l.* FROM livestreams l JOIN livestream_tags lt ON lt.livestream_id = l.id WHERE tag_id=? GROUP BY l.id ORDER BY l.id DESC", tagID); err != nil {
+		if err := dbConn.SelectContext(ctx, &livestreamIDs, "SELECT l.id FROM livestreams l JOIN livestream_tags lt ON lt.livestream_id = l.id WHERE tag_id=? GROUP BY l.id ORDER BY l.id DESC", tagID); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 		}
 	} else {
 		// 検索条件なし
-		query := `SELECT * FROM livestreams l ORDER BY id DESC`
+		query := `SELECT l.id FROM livestreams l ORDER BY id DESC`
 		if c.QueryParam("limit") != "" {
 			limit, err := strconv.Atoi(c.QueryParam("limit"))
 			if err != nil {
@@ -239,10 +239,11 @@ func searchLivestreamsHandler(c echo.Context) error {
 			query += fmt.Sprintf(" LIMIT %d", limit)
 		}
 
-		if err := dbConn.SelectContext(ctx, &livestreamModels, query); err != nil {
+		if err := dbConn.SelectContext(ctx, &livestreamIDs, query); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 		}
 	}
+	livestreamModels := getLivestreamByIDs(livestreamIDs)
 
 	livestreams := make([]Livestream, len(livestreamModels))
 	userIDs := []int64{}
@@ -254,7 +255,7 @@ func searchLivestreamsHandler(c echo.Context) error {
 		return err
 	}
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
@@ -273,17 +274,18 @@ func getMyLivestreamsHandler(c echo.Context) error {
 	sess := getSession(c)
 	userID := sess.Values.UserID
 
-	var livestreamModels []*LivestreamModel
-	if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", userID); err != nil {
+	var livestreamIDs []int64
+	if err := dbConn.SelectContext(ctx, &livestreamIDs, "SELECT l.id FROM livestreams l WHERE user_id = ?", userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
+	livestreamModels := getLivestreamByIDs(livestreamIDs)
 	userMap, err := getUserMap(ctx, dbConn, []int64{userID})
 	if err != nil {
 		return err
 	}
 	livestreams := make([]Livestream, len(livestreamModels))
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
@@ -306,16 +308,17 @@ func getUserLivestreamsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	}
 
-	var livestreamModels []*LivestreamModel
-	if err := dbConn.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams l WHERE user_id = ?", user.ID); err != nil {
+	var livestreamIDs []int64
+	if err := dbConn.SelectContext(ctx, &livestreamIDs, "SELECT id FROM livestreams l WHERE user_id = ?", user.ID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
+	livestreamModels := getLivestreamByIDs(livestreamIDs)
 	userMap := map[int64]UserModel{
 		user.ID: user,
 	}
 	livestreams := make([]Livestream, len(livestreamModels))
 	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, dbConn, *livestreamModels[i], userMap)
+		livestream, err := fillLivestreamResponse(ctx, dbConn, livestreamModels[i], userMap)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 		}
@@ -514,6 +517,16 @@ func getLivestreamByID(id int64) (LivestreamModel, bool) {
 		return LivestreamModel{}, false
 	}
 	return livestream, true
+}
+
+func getLivestreamByIDs(ids []int64) []LivestreamModel {
+	livestreamLock.RLock()
+	defer livestreamLock.RUnlock()
+	livestreams := make([]LivestreamModel, len(ids))
+	for i, l := range ids {
+		livestreams[i] = livestreamCache[l]
+	}
+	return livestreams
 }
 
 func getLivestreamAll() []LivestreamModel {

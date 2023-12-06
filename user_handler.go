@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -142,13 +141,8 @@ func getIconHandler(c echo.Context) error {
 	return c.Blob(http.StatusOK, "image/jpeg", image)
 }
 
-func UnsafeBytes(s string) (bs []byte) {
-	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&bs))
-	bh.Data = sh.Data
-	bh.Len = sh.Len
-	bh.Cap = sh.Len
-	return
+func UnsafeBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 func getIconFiber(c *fiber.Ctx) error {
@@ -297,10 +291,6 @@ func registerHandler(c echo.Context) error {
 
 	userModel.ID = userID
 
-	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "30", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
-	}
-
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
@@ -308,6 +298,10 @@ func registerHandler(c echo.Context) error {
 
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+	}
+
+	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "30", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
 	}
 
 	userLock.Lock()
@@ -321,7 +315,7 @@ func registerHandler(c echo.Context) error {
 // ユーザログインAPI
 // POST /api/login
 func loginHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+	//ctx := c.Request().Context()
 	defer c.Request().Body.Close()
 
 	req := LoginRequest{}
@@ -329,17 +323,12 @@ func loginHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	userModel := UserModel{}
-	// usernameはUNIQUEなので、whereで一意に特定できる
-	err := dbConn.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", req.Username)
-	if errors.Is(err, sql.ErrNoRows) {
+	userModel, exists := getUserByName(req.Username)
+	if !exists {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
 	}
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
-	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(userModel.HashedPassword), []byte(req.Password))
+	err := bcrypt.CompareHashAndPassword([]byte(userModel.HashedPassword), []byte(req.Password))
 	if err == bcrypt.ErrMismatchedHashAndPassword {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
 	}

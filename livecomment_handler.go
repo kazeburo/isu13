@@ -8,10 +8,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
+)
+
+var (
+	ngwordLock  sync.RWMutex
+	ngwordCache map[int64][]NGWord
 )
 
 type PostLivecommentRequest struct {
@@ -126,7 +132,7 @@ func getLivecommentsHandler(c echo.Context) error {
 }
 
 func getNgwords(c echo.Context) error {
-	ctx := c.Request().Context()
+	// ctx := c.Request().Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
@@ -140,14 +146,7 @@ func getNgwords(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	var ngWords []*NGWord
-	if err := dbConn.SelectContext(ctx, &ngWords, "SELECT * FROM ng_words WHERE user_id = ? AND livestream_id = ? ORDER BY id DESC", userID, livestreamID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.JSON(http.StatusOK, []*NGWord{})
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
-		}
-	}
+	ngWords := getNGWordsByLivestreamIDUserID(int64(livestreamID), userID)
 
 	return c.JSON(http.StatusOK, ngWords)
 }
@@ -185,10 +184,7 @@ func postLivecommentHandler(c echo.Context) error {
 	}
 
 	// スパム判定
-	var ngwords []*NGWord
-	if err := tx.SelectContext(ctx, &ngwords, "SELECT id, user_id, livestream_id, word FROM ng_words WHERE user_id = ? AND livestream_id = ?", livestreamModel.UserID, livestreamModel.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
-	}
+	ngwords := getNGWordsByLivestreamIDUserID(livestreamModel.ID, livestreamModel.UserID)
 
 	var hitSpam int
 	for _, ngword := range ngwords {
@@ -341,12 +337,13 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "A streamer can't moderate livestreams that other streamers own")
 	}
 
-	rs, err := tx.NamedExecContext(ctx, "INSERT INTO ng_words(user_id, livestream_id, word, created_at) VALUES (:user_id, :livestream_id, :word, :created_at)", &NGWord{
+	ngword := NGWord{
 		UserID:       int64(userID),
 		LivestreamID: int64(livestreamID),
 		Word:         req.NGWord,
 		CreatedAt:    time.Now().Unix(),
-	})
+	}
+	rs, err := tx.NamedExecContext(ctx, "INSERT INTO ng_words(user_id, livestream_id, word, created_at) VALUES (:user_id, :livestream_id, :word, :created_at)", ngword)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new NG word: "+err.Error())
 	}
@@ -355,15 +352,20 @@ func moderateHandler(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted NG word id: "+err.Error())
 	}
+	ngword.ID = wordID
 
-	var ngwords []*NGWord
-	if err := tx.SelectContext(ctx, &ngwords, "SELECT * FROM ng_words WHERE livestream_id = ? ORDER BY id DESC LIMIT 1", livestreamID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM livecomments WHERE INSTR(comment, ?) > 0`, ngwords[0].Word); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM livecomments WHERE INSTR(comment, ?) > 0`, ngword.Word); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
 	}
+
+	ngwordLock.Lock()
+	if _, ok := ngwordCache[ngword.LivestreamID]; ok {
+		ngwordCache[ngword.LivestreamID] = append([]NGWord{ngword}, ngwordCache[ngword.LivestreamID]...)
+	} else {
+		ngs := []NGWord{ngword}
+		ngwordCache[ngword.LivestreamID] = ngs
+	}
+	ngwordLock.Unlock()
 
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
@@ -439,4 +441,38 @@ func fillLivecommentReportResponse(ctx context.Context, tx dbtx, reportModel Liv
 		CreatedAt:   reportModel.CreatedAt,
 	}
 	return report, nil
+}
+
+func warmupNGWordCache(ctx context.Context) {
+	ngCache := map[int64][]NGWord{}
+	var ngwords []*NGWord
+	query := `SELECT * FROM ng_words ORDER BY id DESC`
+	if err := dbConn.SelectContext(ctx, &ngwords, query); err != nil {
+		return
+	}
+	for _, n := range ngwords {
+		if _, ok := ngCache[n.LivestreamID]; ok {
+			ngCache[n.LivestreamID] = append(ngCache[n.LivestreamID], *n)
+		} else {
+			ngs := []NGWord{*n}
+			ngCache[n.LivestreamID] = ngs
+		}
+	}
+	ngwordLock.Lock()
+	ngwordCache = ngCache
+	ngwordLock.Unlock()
+}
+
+func getNGWordsByLivestreamIDUserID(livestreamID, userID int64) []NGWord {
+	ngwordLock.RLock()
+	defer ngwordLock.RUnlock()
+	r := []NGWord{}
+	if ngs, ok := ngwordCache[livestreamID]; ok {
+		for _, n := range ngs {
+			if n.UserID == userID {
+				r = append(r, n)
+			}
+		}
+	}
+	return r
 }
