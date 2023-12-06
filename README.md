@@ -1,3 +1,7 @@
+Server Environment
+
+- Application 2core/4GB x 1 on さくらのクラウド
+- Benchmarer 4core/8GB on さくらのクラウド
 
 index
 
@@ -190,6 +194,7 @@ score f898e7d2a1ae4a8392c18916a49954a7170c3d38
 2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 117
 2023-12-04T11:54:56.871Z        info    staff-logger    bench/bench.go:335      スコア: 311636
 ```
+<<<<<<< HEAD
 
 score 851176bbbcacd342a3efa9d7e4dce2d882e98a94
 
@@ -232,3 +237,5 @@ score HEAD
 2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:331      名前解決失敗数: 115
 2023-12-06T10:12:01.077Z        info    staff-logger    bench/bench.go:335      スコア: 410319
 ```
+=======
+>>>>>>> dee14839f3be5a6090d6bb28387859ac6aa627d8
